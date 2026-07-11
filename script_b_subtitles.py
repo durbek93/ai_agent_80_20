@@ -1,9 +1,11 @@
+# -*- coding: utf-8 -*-
 import os
 import sys
-from datetime import datetime
-from google import genai
-from dotenv import load_dotenv
 import re
+from datetime import datetime
+from dotenv import load_dotenv
+
+import core
 
 try:
     from youtube_transcript_api import YouTubeTranscriptApi
@@ -12,65 +14,23 @@ except ImportError:
     print("Установи её в консоли командой: pip install youtube-transcript-api")
     sys.exit(1)
 
+# Загружаем переменные окружения (API ключ Gemini)
 load_dotenv()
-client = genai.Client()
 
-PROMPT_BASE = """
-Ты — Эксперт-Аналитик 80/20. Твоя единственная цель — применять «Мышление 80/20» (Закон Парето) к тексту субтитров видео, который тебе предоставляет пользователь. Ты знаешь, что Вселенная несбалансирована: 80% ценности любого текста скрыто всего в 20% его объема. Ты не делаешь обычные пересказы. Ты создаешь экстракт чистой пользы, экономя пользователю часы времени.
-
----
-
-### БЛОК 1: Ключевые принципы (Как искать те самые 20% сути)
-
-При анализе текста используй следующие принципы «Мышления 80/20»:
-1. **Поиск «Жизненно важного меньшинства»:** Игнорируй линейное чтение. Сразу определяй главную идею автора.
-2. **Нелинейность причин и следствий:** Ищи дисбаланс. Какие 20% идей приводят к 80% пользы? 
-3. **Изоляция «Пороговой величины» (Tipping point):** Найди тот самый фактор в тексте, после которого все остальное становится очевидным.
-4. **Простота важнее сложности:** Истинная суть всегда проста. Игнорируй усложнения, ищи базовый рычаг.
-5. **Фокус на результативности:** Выделяй только те 20% правил, которые дают максимальный практический эффект.
-
----
-
-### БЛОК 2: Критерии отсева балласта (Как определять 80% воды)
-
-Безжалостно УДАЛЯЙ и ИГНОРИРУЙ следующие элементы текста:
-1. **Многократные примеры и доказательства:** Оставь только 1 самый яркий или удали их все.
-2. **Исторические и лирические отступления:** Отсекай предыстории и долгие вступления.
-3. **Сложные обоснования простых истин:** Отсекай тяжеловесные академические рассуждения.
-4. **Общеизвестные факты и стереотипы:** Убирай банальности, оставляй только ломающие шаблоны мысли.
-5. **Оправдания и искусственная сложность:** Убирай всё, где автор топчется на месте.
-
----
-
-### БЛОК 3: Строгий Формат ответа
-
-Твой ответ всегда должен быть структурированным, кратким и соответствовать следующему шаблону. Сразу выдавай результат.
-
-**[НАЗВАНИЕ ВИДЕО] — Саммари 80/20**
-
-**1. Чистая суть (1-2 предложения)**
-*Сформулируй фундаментальную идею текста.*
-
-**2. Жизненно важное меньшинство (Ключевые 20%)**
-*Выдели 3-5 главных мыслей/событий текста. Используй маркированный список.*
-
-**3. Тривиальное большинство (Что мы отсекли)**
-*Кратко укажи (1 абзац), на что автор потратил 80% видео, но что пользователю знать НЕ НУЖНО.*
-
-**4. Главный рычаг (Как это применить / Главный вывод)**
-*Один конкретный, прагматичный вывод или призыв к действию.*
-"""
 
 def get_video_id(url):
+    """Извлекает ID видео из ссылки YouTube."""
     match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
     if match:
         return match.group(1)
     return None
 
+
 def process_subtitles_directly(url):
-    os.makedirs('results', exist_ok=True)
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    result_path = f"results/{timestamp}_subs_summary.txt"
+    """
+    Анализирует видео по его субтитрам (без скачивания медиафайлов).
+    """
+    result_path = f"results/{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_subs_summary.txt"
     
     video_id = get_video_id(url)
     if not video_id:
@@ -79,40 +39,36 @@ def process_subtitles_directly(url):
 
     print(f"📥 Скачиваю субтитры для видео: {video_id}")
     try:
-        # Пытаемся получить русские или английские субтитры
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        
         try:
             transcript = transcript_list.find_transcript(['ru', 'en'])
-        except:
-            # Если нет ru/en, берем первые попавшиеся и переводим на русский
+        except Exception:
+            # Если нет ru/en, берем первый попавшийся и переводим на русский
             transcript = list(transcript_list)[0]
             transcript = transcript.translate('ru')
             
         subs_data = transcript.fetch()
         transcript_text = " ".join([t['text'] for t in subs_data])
         print(f"✅ Субтитры успешно скачаны ({len(transcript_text)} символов).")
-        
     except Exception as e:
-        print(f"❌ Ошибка получения субтитров (возможно они отключены для этого видео): {e}")
+        print(f"❌ Ошибка получения субтитров (возможно, они отключены для этого видео): {e}")
         return
 
     print("🤖 Gemini анализирует текст субтитров (режим 80/20)...")
-    
-    final_prompt = f"{PROMPT_BASE}\n\nТекст субтитров:\n{transcript_text}"
-    
     try:
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=final_prompt,
+        prompt_with_input = f"{core.PROMPT_80_20}\n\nТекст субтитров:\n{transcript_text}"
+        summary_text = core.generate_gemini_content_with_retry(
+            client=core.client,
+            model="gemini-2.5-flash",
+            contents=[prompt_with_input]
         )
         
         with open(result_path, "w", encoding="utf-8") as f:
-            f.write(response.text)
+            f.write(summary_text)
         print(f"✨ Готово! Отчет сохранен: {result_path}")
-        
     except Exception as e:
         print(f"❌ Ошибка работы Gemini: {e}")
+
 
 if __name__ == "__main__":
     print("="*50)

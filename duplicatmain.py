@@ -1,15 +1,17 @@
+# -*- coding: utf-8 -*-
 import os
 import re
 import time
 import asyncio
 import logging
 from datetime import datetime
-import yt_dlp
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import FSInputFile
-from google import genai
 from dotenv import load_dotenv
+
+import core
 
 # Настройка логов
 logging.basicConfig(level=logging.INFO)
@@ -17,73 +19,11 @@ logging.basicConfig(level=logging.INFO)
 # Загружаем ключи
 load_dotenv()
 
-# 1. ПОДГОТОВКА ПАПОК
-DIRS = ['downloads', 'results']
-for directory in DIRS:
-    os.makedirs(directory, exist_ok=True)
-
-# 2. ИНИЦИАЛИЗАЦИЯ GEMINI
-try:
-    client = genai.Client()
-    print("✅ Gemini API подключен.")
-except Exception as e:
-    print(f"❌ Ошибка API: {e}")
-    exit(1)
-
-# --- КОНСТАНТЫ ---
-PROMPT_80_20 = """
-Ты — Эксперт-Аналитик 80/20. Твоя единственная цель — применять «Мышление 80/20» (Закон Парето) к любому тексту (книге, статье, рассказу), который тебе предоставляет пользователь. Ты знаешь, что Вселенная несбалансирована: 80% ценности любого текста скрыто всего в 20% его объема (а иногда это 90/10 или 99/1). Ты не делаешь обычные пересказы. Ты создаешь экстракт чистой пользы, экономя пользователю часы времени.
-
----
-
-### БЛОК 1: Ключевые принципы (Как искать те самые 20% сути)
-
-При анализе текста используй следующие принципы «Мышления 80/20»:
-1. **Поиск «Жизненно важного меньшинства»:** Игнорируй линейное чтение. Сразу определяй главную идею автора, ради которой написан текст. Обычно она кроется во введении, заключении или ключевом поворотном моменте.
-2. **Нелинейность причин и следствий:** Ищи дисбаланс. Какие 20% идей, фактов или действий героев приводят к 80% результатов/выводов в тексте? 
-3. **Изоляция «Пороговой величины» (Tipping point):** Найди ту самую мысль или тот самый фактор в тексте, после которого все остальное становится очевидным или неизбежным.
-4. **Простота важнее сложности:** Истинная суть всегда проста. Если концепция в тексте запутана, найди её ядро. Игнорируй усложнения, ищи базовый рычаг (как в физике), с помощью которого автор сдвигает всю свою теорию или сюжет.
-5. **Фокус на результативности:** В нон-фикшн текстах выделяй только те 20% правил, которые дают максимальный практический эффект. В художественных текстах — те 20% событий, которые реально двигают сюжет и трансформируют героев.
-
----
-
-### БЛОК 2: Критерии отсева балласта (Как определять 80% воды)
-
-Безжалостно УДАЛЯЙ и ИГНОРИРУЙ следующие элементы текста (это «Тривиальное большинство»):
-1. **Многократные примеры и доказательства:** Если автор приводит 10 примеров для подтверждения одной идеи, оставь только 2-3 самых ярких.
-2. **Исторические и лирические отступления:** Если это не меняет сути дела, отсекай предыстории, биографии третьих лиц и долгие вступления.
-3. **Сложные обоснования простых истин:** Отсекай тяжеловесные академические рассуждения, если вывод из них сводится к одной простой мысли.
-4. **Второстепенные сюжетные линии и персонажи (для художки):** Игнорируй всё, что не влияет на финальную развязку или главную трансформацию протагониста.
-5. **Общеизвестные факты и стереотипы:** Убирай «социальные условности» и банальности. Оставляй только нестандартные, нелинейные и парадоксальные мысли, которые ломают шаблоны.
-6. **Оправдания и искусственная сложность:** Как говорил фон Манштейн, "суета и сложность — враги результата". Убирай всё, где автор топчется на месте, пытаясь оправдать свою концепцию.
-
----
-
-### БЛОК 3: Строгий Формат ответа
-
-Твой ответ всегда должен быть структурированным, кратким и соответствовать следующему шаблону. Не используй вводных фраз вроде "Конечно, вот ваш ответ". Сразу выдавай результат.
-
-**1. Чистая суть (1-2 предложения)**
-*Сформулируй фундаментальную идею текста. Те самые 1-5%, ради которых текст был написан.*
-
-**2. Жизненно важное меньшинство (Ключевые 20%)**
-*Выдели 3-5 главных мыслей/событий текста, которые дают 80% пользы или понимания. Используй маркированный список. Описывай их максимально емко, без воды.*
-* [Мысль/Событие 1]
-* [Мысль/Событие 2]
-* [Мысль/Событие 3]
-
-**3. Тривиальное большинство (Что мы отсекли)**
-Кратко укажи (1 абзац), на что автор потратил 80% текста, но что пользователю читать НЕ НУЖНО (например: "Автор потратил 200 страниц на анализ 50 разных компаний, но вывод из этого один...", или "Половина книги — это описание второстепенных интриг...").*
-
-4. Главный рычаг (Как это применить / Главный вывод)**
-*Один конкретный, прагматичный вывод или призыв к действию, основанный на тексте. Что пользователь должен вынести для себя прямо сейчас.*
-```
-
-"""
-
-# --- ЛОГИКА ОБРАБОТКИ ---
 
 def analyze_audio(url, loop=None, status_msg=None):
+    """
+    Запускает конвейер: скачивание -> анализ через Gemini API (cloud audio) -> Gemini TTS.
+    """
     def update_status(text):
         print(text)
         if loop and status_msg:
@@ -95,206 +35,128 @@ def analyze_audio(url, loop=None, status_msg=None):
             asyncio.run_coroutine_threadsafe(_edit(), loop)
 
     update_status("🔍 [1/5] Получаю информацию о видео...")
-
-    # Общие настройки yt-dlp: маскировка, обход блокировок, выбор плеера.
-    # Используются в обоих вызовах — при получении метаданных и при скачивании.
-    YDL_BASE_OPTS = {
-        'quiet': True,
-        'cookiefile': 'downloads/cookies.txt',
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
-        },
-        'js_runtimes': {
-            'node': {
-                'path': '/usr/bin/node'
-            }
-        },
-        'extractor_args': {
-            'youtube': {
-                # web-клиент поддерживает cookies и может обходить n-challenge благодаря yt-dlp-ejs и node
-                'player_client': ['web'],
-            }
-        }
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(YDL_BASE_OPTS) as ydl:
-            info = ydl.extract_info(url, download=False)
-            raw_title = info.get('title', 'video')
-            # Оставляем только буквы, цифры, пробелы и базовые знаки
-            clean_title = re.sub(r'[^\w\sа-яА-ЯёЁ-]', '', raw_title).strip()
-            clean_title = re.sub(r'\s+', '_', clean_title)  # пробелы в подчеркивания
-            if not clean_title:
-                clean_title = datetime.now().strftime("%Y-%m-%d")
-            clean_title = clean_title[:100]  # Ограничиваем длину имени
-    except Exception as e:
-        print(f"❌ Ошибка инфо: {e}")
-        clean_title = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    clean_title = core.get_video_info(url)
 
     file_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     audio_path = f"downloads/{file_id}.mp3"
     result_path = f"results/{file_id}_summary.txt"
     tts_audio_path = f"results/{file_id}_voice.mp3"
-    uploaded_file = None
-
-    # ЭТАП 1: Скачивание аудио (быстрый режим)
-    update_status(f"📥 [2/5] Скачиваю аудио:\n«{clean_title}»...")
-    
-    last_update_time = [time.time()]
-    def download_hook(d):
-        if d['status'] == 'downloading':
-            percent = d.get('_percent_str', '0%').strip()
-            # Убираем цветные ANSI-коды, если они есть
-            percent = re.sub(r'\x1b[^m]*m', '', percent)
-            
-            now = time.time()
-            # Обновляем статус раз в 3 секунды для предотвращения флуда
-            if now - last_update_time[0] > 3:
-                update_status(f"📥 [2/5] Скачиваю аудио: {percent}\n«{clean_title}»...")
-                last_update_time[0] = now
-
-    ydl_opts = {
-        **YDL_BASE_OPTS,  # Все общие настройки (маскировка, плееры) наследуем
-        'format': 'bestaudio/best',
-        'outtmpl': f"downloads/{file_id}",
-        'progress_hooks': [download_hook],
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '128',
-        }],
-    }
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-    except Exception as e:
-        print(f"❌ Ошибка скачивания: {e}")
-        return None, None, None
-
-    # ЭТАП 2: Загрузка в облако Gemini
-    update_status("📤 [3/5] Загружаю в Google Cloud...")
-    try:
-        uploaded_file = client.files.upload(file=audio_path)
-        
-        # Ждем обработки
-        elapsed = 0
-        while uploaded_file.state.name == "PROCESSING":
-            print(".", end="", flush=True)
-            if elapsed % 4 == 0:  # Обновляем бота раз в 4 секунды (снижает шанс флуда)
-                update_status(f"📤 [3/4] Облако обрабатывает файл... ({elapsed} сек)")
-            time.sleep(2)
-            elapsed += 2
-            uploaded_file = client.files.get(name=uploaded_file.name)
-
-        if uploaded_file.state.name == "FAILED":
-            print("❌ Ошибка: файл не прошел обработку в Gemini.")
+        # ЭТАП 1: Скачивание аудио
+        update_status(f"📥 [2/5] Скачиваю аудио:\n«{clean_title}»...")
+        download_success = core.download_media(
+            url=url,
+            output_path=audio_path,
+            audio_only=True,
+            progress_callback=lambda p: update_status(f"📥 [2/5] Скачиваю аудио: {p}\n«{clean_title}»...")
+        )
+        if not download_success:
             return None, None, None
 
-        # ЭТАП 3: Анализ 80/20 (добавляем цикл попыток)
-        for attempt in range(3):
-            try:
-                update_status("🤖 [4/5] ИИ анализирует аудио...")
-                response = client.models.generate_content(
-                    model='gemini-2.5-pro', # Сменили модель из-за жестких лимитов 2.0
-                    contents=[uploaded_file, PROMPT_80_20]
-                )
-                
-                if not response.text:
-                    raise ValueError("Ответ от API пустой (возможно, фильтр безопасности)")
-                
-                # Сохраняем текстовый результат
-                with open(result_path, "w", encoding="utf-8") as f:
-                    f.write(response.text)
-                break # Успех, выходим из цикла попыток
-                
-            except Exception as e:
-                error_msg = str(e)
-                if ("503" in error_msg or "429" in error_msg) and attempt < 2:
-                    wait_time = 5 if "503" in error_msg else 30
-                    
-                    # Умное чтение таймера ожидания из ответа Google (например "Please retry in 53.15s")
-                    match = re.search(r'retry in (\d+\.?\d*)s', error_msg)
-                    if match:
-                        wait_time = int(float(match.group(1))) + 5 # Добавляем 5 секунд запаса
-                        
-                    print(f"⏳ Ошибка лимитов API. Умное ожидание {wait_time} сек...")
-                    time.sleep(wait_time)
-                else:
-                    raise e # Пробрасываем ошибку дальше, если попытки кончились
+        # ЭТАП 2 и 3: Загрузка в облако и анализ ИИ (модель gemini-2.5-pro)
+        summary_text = core.analyze_cloud_audio(
+            client=core.client,
+            audio_path=audio_path,
+            model="gemini-2.5-pro",
+            progress_callback=lambda status: update_status(status.replace("📥 [2/5]", "").replace("🤖 [4/5]", ""))
+        )
+        
+        # Сохраняем текстовый результат
+        with open(result_path, "w", encoding="utf-8") as f:
+            f.write(summary_text)
 
-        # ЭТАП 4: Озвучка выжимки (TTS)
+        # ЭТАП 4: Озвучка выжимки через Gemini TTS
         update_status("🎙️ [5/5] Создаю аудио-выжимку через Gemini 2.5 Flash TTS...")
-        try:
-            clean_text = response.text.replace('*', '').replace('#', '')
-            
-            from google.genai import types as genai_types
-            
-            prompt_tts = f"Read the following text out loud, do not generate any text responses, just audio:\n\n{clean_text}"
-            tts_response = client.models.generate_content(
-                model="gemini-2.5-flash-preview-tts",
-                contents=prompt_tts,
-                config=genai_types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                )
-            )
-            
-            audio_saved = False
-            if getattr(tts_response, 'candidates', None) and len(tts_response.candidates) > 0:
-                for part in tts_response.candidates[0].content.parts:
-                    if part.inline_data:
-                        # API Gemini возвращает чистые сырые (RAW PCM) аудио-данные (24kHz, 16-bit, Mono)
-                        # Поэтому их нужно "обернуть" и сжать в MP3 с помощью ffmpeg
-                        raw_audio_path = tts_audio_path.replace(".mp3", ".raw")
-                        with open(raw_audio_path, "wb") as f:
-                            f.write(part.inline_data.data)
-                        
-                        # Конвертируем RAW PCM в валидный MP3-файл
-                        os.system(f'ffmpeg -y -f s16le -ar 24000 -ac 1 -i "{raw_audio_path}" -b:a 128k "{tts_audio_path}" -loglevel error')
-                        
-                        if os.path.exists(raw_audio_path):
-                            os.remove(raw_audio_path)
-                            
-                        audio_saved = True
-                        break
-            
-            if not audio_saved or not os.path.exists(tts_audio_path):
-                print("⚠️ Gemini не вернул аудио данные.")
-                tts_audio_path = None
-                
-        except Exception as e:
-            print(f"⚠️ Ошибка Gemini TTS: {e}")
-            tts_audio_path = None
-
-        return result_path, tts_audio_path, clean_title
+        tts_success = core.run_gemini_tts(
+            client=core.client,
+            text=summary_text,
+            output_path=tts_audio_path
+        )
+        
+        actual_tts_audio_path = tts_audio_path if tts_success else None
+        return result_path, actual_tts_audio_path, clean_title
 
     except Exception as e:
         print(f"❌ Ошибка конвейера ИИ: {e}")
         return None, None, None
         
     finally:
-        # ЧИСТКА ОБЛАКА: Гарантированно удаляем файл из Google, даже если была ошибка
-        try:
-            if uploaded_file:
-                client.files.delete(name=uploaded_file.name)
-                print("\n🧹 Файл удален из Google Cloud.")
-        except Exception as e:
-            pass
-            
         # ЭТАП 5: Удаление локального тяжелого аудио
         if os.path.exists(audio_path):
-            os.remove(audio_path)
+            try:
+                os.remove(audio_path)
+            except Exception:
+                pass
+
+
+def analyze_text_article(url, loop=None, status_msg=None):
+    """
+    Запускает конвейер для статей: скачивание текста -> анализ через Gemini API -> Gemini TTS.
+    """
+    def update_status(text):
+        print(text)
+        if loop and status_msg:
+            async def _edit():
+                try:
+                    await status_msg.edit_text(text)
+                except Exception as e:
+                    print(f"⚠️ Ошибка редактирования TG: {e}")
+            asyncio.run_coroutine_threadsafe(_edit(), loop)
+
+    update_status("🔍 [1/4] Скачиваю и извлекаю текст статьи...")
+    try:
+        title, article_text = core.extract_article_text(url)
+        clean_title = core.sanitize_title(title)
+    except Exception as e:
+        print(f"❌ Ошибка при извлечении текста статьи: {e}")
+        return None, None, None
+
+    file_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    result_path = f"results/{file_id}_summary.txt"
+    tts_audio_path = f"results/{file_id}_voice.mp3"
+
+    try:
+        update_status("🤖 [2/4] Gemini анализирует статью (режим 80/20)...")
+        summary_text = core.analyze_text_content(
+            client=core.client,
+            text=article_text,
+            model="gemini-2.5-pro"
+        )
+        
+        with open(result_path, "w", encoding="utf-8") as f:
+            f.write(summary_text)
+
+        update_status("🎙️ [3/4] Создаю аудио-выжимку через Gemini 2.5 Flash TTS...")
+        tts_success = core.run_gemini_tts(
+            client=core.client,
+            text=summary_text,
+            output_path=tts_audio_path
+        )
+        
+        actual_tts_audio_path = tts_audio_path if tts_success else None
+        return result_path, actual_tts_audio_path, clean_title
+
+    except Exception as e:
+        print(f"❌ Ошибка конвейера ИИ для статьи: {e}")
+        return None, None, None
+
 
 # --- ТЕЛЕГРАМ БОТ ---
 
 bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
 dp = Dispatcher()
 
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer("🚀 Привет! Пришли ссылку на YouTube, и я сделаю аудио-выжимку 80/20 через прямое прослушивание.")
+    await message.answer(
+        "🚀 Привет! Пришли ссылку на видео (YouTube, Shorts, Reels, TikTok и др.) "
+        "или статью/новость с любого сайта, и я сделаю аудио-выжимку 80/20."
+    )
 
-@dp.message(F.text.contains("youtu"))
+
+@dp.message(F.text.regexp(r'https?://[^\s]+'))
 async def handle_link(message: types.Message):
     status = await message.answer("⏳ Запуск конвейера...")
     
@@ -304,25 +166,36 @@ async def handle_link(message: types.Message):
         await status.edit_text("❌ Не смог найти правильную ссылку в сообщении.")
         return
         
-    clean_url = url_match.group(1) # Берем только найденный URL
+    clean_url = url_match.group(1)
     
-    # Запускаем тяжелую логику, передавая ЧИСТУЮ ссылку (clean_url)
     loop = asyncio.get_running_loop()
-    res_txt, res_audio, clean_title = await asyncio.to_thread(analyze_audio, clean_url, loop, status)
+    
+    if core.is_video_url(clean_url):
+        res_txt, res_audio, clean_title = await asyncio.to_thread(analyze_audio, clean_url, loop, status)
+    else:
+        res_txt, res_audio, clean_title = await asyncio.to_thread(analyze_text_article, clean_url, loop, status)
     
     if res_txt and os.path.exists(res_txt):
         await status.edit_text("✅ Готово! Лови суть:")
         
         if res_audio and os.path.exists(res_audio):
-            await message.answer_audio(FSInputFile(res_audio, filename=f"{clean_title}_voice.mp3"), caption="🎧 Голосовая выжимка")
+            await message.answer_audio(
+                FSInputFile(res_audio, filename=f"{clean_title}_voice.mp3"),
+                caption="🎧 Голосовая выжимка"
+            )
         
-        await message.answer_document(FSInputFile(res_txt, filename=f"{clean_title}_summary.txt"), caption="📝 Текстовый отчет 80/20")
+        await message.answer_document(
+            FSInputFile(res_txt, filename=f"{clean_title}_summary.txt"),
+            caption="📝 Текстовый отчет 80/20"
+        )
     else:
         await status.edit_text("❌ Что-то пошло не так. Проверь логи сервера.")
+
 
 async def main():
     print("🤖 Бот на базе Gemini Cloud Audio запущен!")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

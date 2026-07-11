@@ -1,61 +1,37 @@
-import time
-import logging
-import asyncio
+# -*- coding: utf-8 -*-
 import os
+import re
+import asyncio
+import logging
+from datetime import datetime
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import FSInputFile
-from datetime import datetime
-import yt_dlp
-import whisper
-import re
-from google import genai
 from dotenv import load_dotenv
+
+import core
 
 logging.basicConfig(level=logging.INFO)
 
 # Загружаем переменные окружения (API ключ Gemini)
 load_dotenv()
 
-# 1. АВТОМАТИЧЕСКОЕ СОЗДАНИЕ ПАПОК
-# Скрипт сам создаст папки, если их нет
-DIRS = ['downloads', 'transcripts', 'results']
-for directory in DIRS:
-    os.makedirs(directory, exist_ok=True)
-
-# 2. ОДНОРАЗОВАЯ ЗАГРУЗКА МОДЕЛЕЙ (Экономия времени)
-print("🧠 Инициализация систем. Загружаю ИИ-модели (это займет пару секунд)...")
-try:
-    gemini_client = genai.Client()
-except Exception as e:
-    print(f"❌ Ошибка ключа Gemini. Проверь файл .env! Подробности: {e}")
-    exit(1)
-
-whisper_model = whisper.load_model("base") # Используем базовую модель
-print("✅ Системы готовы к работе.\n")
 
 def process_video(url, loop=None, status_msg=None):
+    """
+    Запускает конвейер: скачивание видео -> распознавание Whisper -> анализ Gemini -> Edge-TTS.
+    """
     def update_status(text):
         print(text)
         if loop and status_msg:
             try:
                 asyncio.run_coroutine_threadsafe(status_msg.edit_text(text), loop)
-            except:
+            except Exception:
                 pass
 
     update_status("🔍 [1/5] Получаю информацию о видео...")
-    try:
-        ydl_opts_info = {'quiet': True, 'cookiefile': 'downloads/cookies.txt'}
-        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-            info = ydl.extract_info(url, download=False)
-            raw_title = info.get('title', 'video')
-            clean_title = re.sub(r'[^\w\sа-яА-ЯёЁ-]', '', raw_title).strip()
-            clean_title = re.sub(r'\s+', '_', clean_title)
-            if not clean_title:
-                clean_title = datetime.now().strftime("%Y-%m-%d")
-    except Exception as e:
-        print(f"❌ Ошибка инфо: {e}")
-        clean_title = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    clean_title = core.get_video_info(url)
     
     video_path = f"downloads/{clean_title}.mp4"
     transcript_path = f"transcripts/{clean_title}_transcript.txt"
@@ -64,183 +40,75 @@ def process_video(url, loop=None, status_msg=None):
 
     # --- ЭТАП 1: СКАЧИВАНИЕ ---
     update_status(f"📥 [2/5] Скачиваю видео:\n«{clean_title}»...")
-    ydl_opts = {
-        'format': 'best',
-        'outtmpl': video_path,
-        'quiet': True,
-        'no_warnings': True,
-        'cookiefile': 'downloads/cookies.txt'
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-    except Exception as e:
-        print(f"❌ Ошибка скачивания: {e}")
-        return # Если не скачалось, пропускаем это видео и идем дальше
+    download_success = core.download_media(
+        url=url,
+        output_path=video_path,
+        audio_only=False,
+        progress_callback=lambda p: update_status(f"📥 [2/5] Скачиваю видео: {p}\n«{clean_title}»...")
+    )
+    if not download_success:
+        return None, None
 
     # --- ЭТАП 2: РАСПОЗНАВАНИЕ ---
-    update_status(f"🎧 [3/5] Whisper распознает речь...")
+    update_status("🎧 [3/5] Whisper распознает речь...")
     try:
-        result = whisper_model.transcribe(video_path)
-        transcript_text = result["text"]
-        
+        transcript_text = core.transcribe_local_whisper(
+            audio_path=video_path,
+            model_size="base"
+        )
         with open(transcript_path, "w", encoding="utf-8") as f:
             f.write(transcript_text)
         print(f"📝 Текст сохранен: {transcript_path}")
     except Exception as e:
         print(f"❌ Ошибка распознавания речи: {e}")
-        return
+        return None, None
 
-    
     # --- ЭТАП 3: СУММАРИЗАЦИЯ GEMINI ---
-    update_status(f"🤖 [4/5] Gemini анализирует текст...")
-    
-    prompt = f"""
-Ты — Эксперт-Аналитик 80/20. Твоя единственная цель — применять «Мышление 80/20» (Закон Парето) к любому тексту (книге, статье, рассказу), который тебе предоставляет пользователь. Ты знаешь, что Вселенная несбалансирована: 80% ценности любого текста скрыто всего в 20% его объема (а иногда это 90/10 или 99/1). Ты не делаешь обычные пересказы. Ты создаешь экстракт чистой пользы, экономя пользователю часы времени.
-
----
-
-### БЛОК 1: Ключевые принципы (Как искать те самые 20% сути)
-
-При анализе текста используй следующие принципы «Мышления 80/20»:
-1. **Поиск «Жизненно важного меньшинства»:** Игнорируй линейное чтение. Сразу определяй главную идею автора, ради которой написан текст. Обычно она кроется во введении, заключении или ключевом поворотном моменте.
-2. **Нелинейность причин и следствий:** Ищи дисбаланс. Какие 20% идей, фактов или действий героев приводят к 80% результатов/выводов в тексте? 
-3. **Изоляция «Пороговой величины» (Tipping point):** Найди ту самую мысль или тот самый фактор в тексте, после которого все остальное становится очевидным или неизбежным.
-4. **Простота важнее сложности:** Истинная суть всегда проста. Если концепция в тексте запутана, найди её ядро. Игнорируй усложнения, ищи базовый рычаг (как в физике), с помощью которого автор сдвигает всю свою теорию или сюжет.
-5. **Фокус на результативности:** В нон-фикшн текстах выделяй только те 20% правил, которые дают максимальный практический эффект. В художественных текстах — те 20% событий, которые реально двигают сюжет и трансформируют героев.
-
----
-
-### БЛОК 2: Критерии отсева балласта (Как определять 80% воды)
-
-Безжалостно УДАЛЯЙ и ИГНОРИРУЙ следующие элементы текста (это «Тривиальное большинство»):
-1. **Многократные примеры и доказательства:** Если автор приводит 10 примеров для подтверждения одной идеи, оставь только 1 самый яркий или удали их все, оставив лишь саму идею.
-2. **Исторические и лирические отступления:** Если это не меняет сути дела, отсекай предыстории, биографии третьих лиц и долгие вступления.
-3. **Сложные обоснования простых истин:** Отсекай тяжеловесные академические рассуждения, если вывод из них сводится к одной простой мысли.
-4. **Второстепенные сюжетные линии и персонажи (для художки):** Игнорируй всё, что не влияет на финальную развязку или главную трансформацию протагониста.
-5. **Общеизвестные факты и стереотипы:** Убирай «социальные условности» и банальности. Оставляй только нестандартные, нелинейные и парадоксальные мысли, которые ломают шаблоны.
-6. **Оправдания и искусственная сложность:** Как говорил фон Манштейн, "суета и сложность — враги результата". Убирай всё, где автор топчется на месте, пытаясь оправдать свою концепцию.
-
----
-
-### БЛОК 3: Строгий Формат ответа
-
-Твой ответ всегда должен быть структурированным, кратким и соответствовать следующему шаблону. Не используй вводных фраз вроде "Конечно, вот ваш ответ". Сразу выдавай результат.
-
-**[НАЗВАНИЕ ТЕКСТА/КНИГИ] — Саммари 80/20**
-
-**1. Чистая суть (1-2 предложения)**
-*Сформулируй фундаментальную идею текста. Те самые 1-5%, ради которых текст был написан.*
-
-**2. Жизненно важное меньшинство (Ключевые 20%)**
-*Выдели 3-5 главных мыслей/событий текста, которые дают 80% пользы или понимания. Используй маркированный список. Описывай их максимально емко, без воды.*
-* [Мысль/Событие 1]
-* [Мысль/Событие 2]
-* [Мысль/Событие 3]
-
-**3. Тривиальное большинство (Что мы отсекли)**
-Кратко укажи (1 абзац), на что автор потратил 80% текста, но что пользователю читать НЕ НУЖНО (например: "Автор потратил 200 страниц на анализ 50 разных компаний, но вывод из этого один...", или "Половина книги — это описание второстепенных интриг...").*
-
-4. Главный рычаг (Как это применить / Главный вывод)**
-*Один конкретный, прагматичный вывод или призыв к действию, основанный на тексте. Что пользователь должен вынести для себя прямо сейчас.*
-```
-
-***
-
-### Почему этот Prompt будет работать идеально:
-1. **Он задает фреймворк мышления:** Агент не просто «сокращает текст», он ищет *нелинейности* и *дисбаланс*, о которых пишут Кох, Зипф и Джуран.
-2. **Он учит ИИ безжалостности:** ИИ по умолчанию любит быть многословным и вежливым. Блок «Критерии отсева балласта» жестко запрещает ему пересказывать примеры (что обычно и составляет 80% объема бизнес-книг).
-3. **Он использует психологию Парето:** В формате ответа есть гениальный пункт *«Что мы отсекли»*. Это дает пользователю психологическое облегчение (он понимает, сколько времени сэкономил) и подтверждает, что агент выполнил свою работу именно по принципу 80/20, а не просто сделал стандартный пересказ.
-
-Текст:
-{transcript_text}
-"""
-
-    for attempt in range(3):  # Пробуем 3 раза
-        try:
-            response = gemini_client.models.generate_content(
-                model='gemini-2.5-flash', # Возвращаем стабильную Flash-версию с большими лимитами
-                contents=prompt,
-            )
-            
-            with open(result_path, "w", encoding="utf-8") as f:
-                f.write(response.text)
-            print(f"✨ Готово! Отчет 80/20 сохранен: {result_path}")
-            
-            # Добавляем небольшую паузу между видео, чтобы не злить спам-фильтры Google
-            print("⏳ Охлаждаю системы 15 секунд перед следующим видео...")
-            time.sleep(15)
-            break 
-            
-        except Exception as e:
-            error_msg = str(e)
-            if "503" in error_msg and attempt < 2:
-                print(f"⏳ Сервер перегружен (503). Жду 5 секунд... (Попытка {attempt+2})")
-                time.sleep(5)
-            elif "429" in error_msg and attempt < 2:
-                print(f"⏳ Превышен лимит API (429). Жду 30 секунд, чтобы квота обновилась... (Попытка {attempt+2})")
-                time.sleep(30)
-            else:
-                print(f"❌ Ошибка работы Gemini: {e}")
-                break
+    update_status("🤖 [4/5] Gemini анализирует текст...")
+    try:
+        prompt_with_input = f"{core.PROMPT_80_20}\n\nТекст:\n{transcript_text}"
+        summary_text = core.generate_gemini_content_with_retry(
+            client=core.client,
+            model="gemini-2.5-flash",
+            contents=[prompt_with_input]
+        )
+        with open(result_path, "w", encoding="utf-8") as f:
+            f.write(summary_text)
+        print(f"✨ Готово! Отчет 80/20 сохранен: {result_path}")
+    except Exception as e:
+        print(f"❌ Ошибка работы Gemini: {e}")
+        return None, None
 
     # --- ЭТАП 4: ОЗВУЧКА ---
     update_status("🎙️ [5/5] Создаю аудио-выжимку...")
-    try:
-        # Читаем красивый текст с цифрами и звездочками
-        with open(result_path, "r", encoding="utf-8") as f:
-            raw_text = f.read()
-            
-        # Умный фильтр: стираем звездочки и решетки, ЦИФРЫ ОСТАЮТСЯ!
-        clean_text = raw_text.replace('*', '').replace('#', '')
-        
-        # Создаем скрытый файл только для диктора
-        clean_path = f"results/{timestamp}_clean.txt"
-        with open(clean_path, "w", encoding="utf-8") as f:
-            f.write(clean_text)
+    tts_success = core.run_edge_tts(
+        text=summary_text,
+        output_path=audio_path,
+        voice="ru-RU-DmitryNeural"
+    )
+    if not tts_success:
+        print("❌ Ошибка при создании аудио.")
 
-        voice = "ru-RU-DmitryNeural"
-        # Натравливаем диктора на очищенный файл
-        command = f'edge-tts --voice {voice} -f "{clean_path}" --write-media "{audio_path}"'
-        os.system(command)
-        
-        # Дворник: удаляем временный файл
-        if os.path.exists(clean_path):
-            os.remove(clean_path)
-            
-        print(f"🔊 Аудио сохранено: {audio_path}")
-    except Exception as e:
-        print(f"❌ Ошибка при создании аудио: {e}")
-
-    # --- ЭТАП 5: ОЧИСТКА МУСОРА И ВОЗВРАТ ФАЙЛОВ ---
-    
+    # --- ЭТАП 5: ОЧИСТКА МУСОРА ---
     print("🧹 Убираю за собой временные файлы...")
     try:
-        # Удаляем тяжелое видео и сырой текст, оставляем только summary и mp3
         if os.path.exists(video_path):
             os.remove(video_path)
         if os.path.exists(transcript_path):
             os.remove(transcript_path)
-            
         print("✨ Чистота наведена!")
-        
-        # Самая важная строка: передаем пути к файлам обратно боту
-        return result_path, audio_path
-        
     except Exception as e:
         print(f"⚠️ Ошибка при удалении файлов: {e}")
-        # Если всё сломалось, возвращаем пустоту
-        return None, None    
 
-    # ==========================================
-    # --- ТЕЛЕГРАМ БОТ ---
-    # ==========================================
+    return result_path, (audio_path if tts_success else None)
 
-# 1. Инициализация
+
+# --- ТЕЛЕГРАМ БОТ ---
+
 bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
 dp = Dispatcher()
 
-# 2. Обработчик команды /start
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
@@ -248,21 +116,19 @@ async def cmd_start(message: types.Message):
         "Отправь мне ссылку на YouTube, и я пришлю тебе аудио-выжимку 80/20 и текстовый отчет."
     )
 
-# 3. Обработчик ссылок YouTube
+
 @dp.message(F.text.contains("youtu"))
 async def process_youtube_link(message: types.Message):
     url = message.text
     status_msg = await message.answer("⏳ Запуск конвейера...")
     
     try:
-        # 4. Запуск тяжелой задачи в фоне
         loop = asyncio.get_running_loop()
         result_path, audio_path = await asyncio.to_thread(process_video, url, loop, status_msg)
         
         if result_path and audio_path:
             await status_msg.edit_text("✅ Анализ завершен! Отправляю файлы...")
             
-            # 5. Отправка файлов в чат
             audio_file = FSInputFile(audio_path)
             await message.answer_audio(audio_file)
             
@@ -274,10 +140,11 @@ async def process_youtube_link(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Системная ошибка: {e}")
 
-# 6. Запуск сервера
+
 async def main():
     print("🤖 Бот запущен и слушает Telegram!")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
