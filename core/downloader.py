@@ -1,28 +1,68 @@
 # -*- coding: utf-8 -*-
 """Модуль для работы с yt-dlp (получение метаданных, скачивание видео/аудио)."""
+import os
 import re
+import sys
 import time
+import subprocess
 from datetime import datetime
 import yt_dlp
 
 # Общие настройки yt-dlp для обхода блокировок и парсинга n-challenge
 YDL_BASE_OPTS = {
     'quiet': True,
-    'cookiefile': 'downloads/cookies.txt',
     'http_headers': {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
     },
-    'js_runtimes': {
-        'node': {
-            'path': '/usr/bin/node'
-        }
-    },
-    'extractor_args': {
-        'youtube': {
-            'player_client': ['web'],
-        }
-    }
+    'remote_components': ['ejs:github'],
 }
+
+# Безопасная проверка прав доступа к cookies.txt
+cookie_path = 'downloads/cookies.txt'
+if os.path.exists(cookie_path):
+    try:
+        if os.access(cookie_path, os.R_OK | os.W_OK):
+            YDL_BASE_OPTS['cookiefile'] = cookie_path
+    except Exception:
+        pass
+
+
+def check_and_update_ytdlp(days_interval: int = 5):
+    """Проверяет, прошло ли n дней с последнего обновления yt-dlp, и при необходимости обновляет."""
+    try:
+        os.makedirs('cache', exist_ok=True)
+    except Exception:
+        pass
+
+    stamp_file = 'cache/.ytdlp_last_update'
+    now = time.time()
+    
+    if os.path.exists(stamp_file):
+        try:
+            with open(stamp_file, 'r') as f:
+                last_update = float(f.read().strip())
+            if now - last_update < days_interval * 86400:
+                return
+        except Exception:
+            pass
+
+    try:
+        print("🔄 Проверка автообновления yt-dlp (каждые 5 дней)...")
+        res = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "--quiet", "--user", "yt-dlp", "yt-dlp-ejs"],
+            check=False,
+            capture_output=True
+        )
+        if res.returncode == 0:
+            with open(stamp_file, 'w') as f:
+                f.write(str(now))
+            print("✅ yt-dlp актуален.")
+        else:
+            print("ℹ️ Пропуск автообновления yt-dlp (стабильная версия используется).")
+    except Exception as e:
+        print(f"⚠️ Пропуск автообновления yt-dlp: {e}")
+
+
 
 
 def sanitize_title(raw_title: str) -> str:
@@ -36,6 +76,7 @@ def sanitize_title(raw_title: str) -> str:
 
 def get_video_info(url: str) -> str:
     """Извлекает и возвращает очищенное название видео."""
+    check_and_update_ytdlp(days_interval=5)
     try:
         with yt_dlp.YoutubeDL(YDL_BASE_OPTS) as ydl:
             info = ydl.extract_info(url, download=False)

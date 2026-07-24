@@ -19,18 +19,31 @@ def is_video_url(url: str) -> bool:
     """
     Проверяет, является ли ссылка видеороликом.
     """
-    video_domains = [
-        r'youtube\.com', r'youtu\.be',
-        r'instagram\.com',
-        r'tiktok\.com',
-        r'facebook\.com', r'fb\.watch',
-        r'twitter\.com', r'x\.com',
-        r'vimeo\.com',
-        r'vk\.com/video', r'vkontakte\.ru/video',
-        r'rutube\.ru',
-    ]
-    url_lower = url.lower()
-    return any(re.search(pattern, url_lower) for pattern in video_domains)
+    video_domains = {
+        'youtube.com', 'youtu.be',
+        'instagram.com',
+        'tiktok.com',
+        'facebook.com', 'fb.watch',
+        'twitter.com', 'x.com',
+        'vimeo.com',
+        'rutube.ru',
+    }
+    try:
+        parsed_url = urllib.parse.urlparse(url if url.startswith(('http://', 'https://')) else f'http://{url}')
+        domain = parsed_url.netloc.lower()
+        if domain.startswith('www.'):
+            domain = domain[4:]
+
+        if 'vk.com' in domain or 'vkontakte.ru' in domain:
+            return '/video' in parsed_url.path.lower()
+
+        for v_domain in video_domains:
+            if domain == v_domain or domain.endswith('.' + v_domain):
+                return True
+    except Exception:
+        pass
+    return False
+
 
 
 def get_page_title(url: str, html_content: str = None) -> str:

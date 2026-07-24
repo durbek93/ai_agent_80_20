@@ -85,6 +85,30 @@ bash start.sh
 
 ## 🆕 Последние изменения (Changelog)
 
+### Комплексное укрепление безопасности и DevSecOps аудит (Июль 2026)
+1. **Изоляция Docker и принцип наименьших привилегий (Least Privilege)**:
+   - В [Dockerfile](file:///home/ubuntu/ai_agent_for_vps/Dockerfile) создан непривилегированный системный пользователь `appuser:appgroup`. Все процессы внутри контейнера исполняются без `root`-привилегий.
+   - Зафиксирована стабильная релизная версия `Deno v2.2.3` для корректной обработки `n-challenge` в `yt-dlp`.
+2. **Разграничение доступа (IAM / Whitelisting) в Telegram-боте**:
+   - В [duplicatmain.py](file:///home/ubuntu/ai_agent_for_vps/duplicatmain.py) и [main.py](file:///home/ubuntu/ai_agent_for_vps/main.py) внедрена проверка Telegram ID через параметр `ALLOWED_TELEGRAM_USERS` в `.env`. Неавторизованные пользователи больше не могут использовать Gemini API и ресурсы VPS.
+   - Внедрена валидация ключей `validate_env()` при запуске приложения.
+3. **Ограничение ресурсов (cgroups) и гигиена секретов**:
+   - В [start.sh](file:///home/ubuntu/ai_agent_for_vps/start.sh) добавлены cgroups-лимиты на ресурсы контейнера (`--memory="2g" --cpus="2.0" --pids-limit=100`), защищающие VPS от исчерпания памяти и процессов.
+   - Автоматизирована настройка прав доступа `chmod 600 .env` и корректных прав на смонтированные директории.
+4. **Безопасная работа с файлами и фиксация версий**:
+   - В [core/downloader.py](file:///home/ubuntu/ai_agent_for_vps/core/downloader.py) внедрена безопасная проверка прав на файл `downloads/cookies.txt` во избежание ошибок `Permission denied`.
+   - В [requirements.txt](file:///home/ubuntu/ai_agent_for_vps/requirements.txt) зафиксированы версии внешних библиотек.
+5. **Автоматический CI/CD Пайплайн**:
+   - Создан рабочий процесс [.github/workflows/security-check.yml](file:///home/ubuntu/ai_agent_for_vps/.github/workflows/security-check.yml) для автопроверки синтаксиса Python и линтинга кода.
+
+### Исправление маршрутизации ссылок и обход блокировок (Июль 2026)
+
+1. **Точная маршрутизация ссылок (`is_video_url`)**: 
+   * Переработана логика распознавания видео-ссылок в [core/scraper.py](file:///home/ubuntu/ai_agent_for_vps/core/scraper.py#L18-L46). Раньше проверка использовала подстрочные регулярные выражения (включая `r'x\.com'`), из-за чего веб-статьи с доменов вроде `toptraders0x.com` ошибочно направлялись в видео-конвейер `yt-dlp` вместо статейного парсера и вызывали сбои `ffprobe`.
+   * Новая логика использует строгий парсинг доменов и поддоменов через `urllib.parse` с отдельной проверкой путей (например, `/video` для ВКонтакте).
+2. **Обновление авторизации в `yt-dlp`**:
+   * Обновлен файл авторизации `downloads/cookies.txt` для обхода блокировок сервисов (Instagram Reels, YouTube) из подсетей облачных VPS (Oracle Cloud).
+
 ### Поддержка скрапинга статей и мультиплатформенного видео (Июнь 2026)
 Реализована поддержка обработки любых веб-ссылок:
 1. **Автоматическая маршрутизация ссылок**: Бот распознает тип контента. Если ссылка ведет на видео-сервисы (YouTube, Reels, TikTok, Vimeo, VK Video, RuTube, Facebook, Twitter/X), запускается скачивание звуковой дорожки и Cloud Audio анализ. Все остальные ссылки обрабатываются как статьи.

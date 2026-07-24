@@ -1,5 +1,7 @@
 #!/bin/bash
 
-echo "Удаляем мусор"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo "Удаляем мусор..."
 
-sudo rm -rf ~/ai_agent/transcripts/*.txt ~/ai_agent/results/*
+sudo rm -rf "$DIR/transcripts/"* "$DIR/results/"*
+

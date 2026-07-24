@@ -105,12 +105,38 @@ def process_video(url, loop=None, status_msg=None):
 
 # --- ТЕЛЕГРАМ БОТ ---
 
-bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+raw_allowed = os.getenv("ALLOWED_TELEGRAM_USERS", "").strip()
+ALLOWED_USERS = set(int(uid.strip()) for uid in raw_allowed.split(",") if uid.strip().isdigit()) if raw_allowed else set()
+
+def is_user_allowed(user_id: int) -> bool:
+    if not ALLOWED_USERS:
+        return True
+    return user_id in ALLOWED_USERS
+
+def validate_env():
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    missing = []
+    if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "your_telegram_bot_token_here":
+        missing.append("TELEGRAM_TOKEN")
+    if not gemini_key or gemini_key == "your_gemini_api_key_here":
+        missing.append("GEMINI_API_KEY")
+    if missing:
+        raise ValueError(f"❌ Ошибка конфигурации: Переменные {', '.join(missing)} не заданы в .env!")
+
+if TELEGRAM_TOKEN:
+    bot = Bot(token=TELEGRAM_TOKEN)
+else:
+    bot = None
+
 dp = Dispatcher()
 
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        await message.answer("⛔ Доступ ограничен. Ваш Telegram ID не находится в списке разрешенных.")
+        return
     await message.answer(
         "👋 Привет! Я твой личный ИИ-Аналитик.\n"
         "Отправь мне ссылку на YouTube, и я пришлю тебе аудио-выжимку 80/20 и текстовый отчет."
@@ -119,6 +145,10 @@ async def cmd_start(message: types.Message):
 
 @dp.message(F.text.contains("youtu"))
 async def process_youtube_link(message: types.Message):
+    if not is_user_allowed(message.from_user.id):
+        await message.answer("⛔ Доступ ограничен. Ваш Telegram ID не находится в списке разрешенных.")
+        return
+
     url = message.text
     status_msg = await message.answer("⏳ Запуск конвейера...")
     
@@ -142,6 +172,11 @@ async def process_youtube_link(message: types.Message):
 
 
 async def main():
+    validate_env()
+    if ALLOWED_USERS:
+        logging.info(f"🔒 Авторизация включена для {len(ALLOWED_USERS)} пользователей.")
+    else:
+        logging.warning("⚠️ Внимание: ALLOWED_TELEGRAM_USERS не задан в .env. Бот доступен всем!")
     print("🤖 Бот запущен и слушает Telegram!")
     await dp.start_polling(bot)
 
