@@ -85,6 +85,16 @@ bash start.sh
 
 ## 🆕 Последние изменения (Changelog)
 
+### Интеграция QuickJS и умная каскадная стратегия скачивания в yt-dlp (Июль 2026)
+1. **Решение проблемы `n-challenge` с помощью QuickJS**:
+   - В [Dockerfile](file:///home/ubuntu/ai_agent_for_vps/Dockerfile) добавлен лёгкий JS-интерпретатор `quickjs` (`apt-get install quickjs`).
+   - В [core/downloader.py](file:///home/ubuntu/ai_agent_for_vps/core/downloader.py) параметры `YDL_BASE_OPTS` обновлены правильным форматом словаря `'js_runtimes': {'quickjs': {}, 'node': {}, 'deno': {}}`. Это решило проблему, когда `yt-dlp` объявлял `Deno v2.x` и `Node v20` неподдерживаемыми (`unsupported`) и сбрасывал скачивание.
+2. **Многоуровневая каскадная стратегия (Smart Fallback)**:
+   - В [core/downloader.py](file:///home/ubuntu/ai_agent_for_vps/core/downloader.py) переработаны функции `get_video_info` и `download_media`:
+     - **Этап 1:** Первая попытка скачивания выполняется **без куки**, что обходит блокировку `SABR-эксперимента` YouTube (когда на аккаунтных куках выдаются только изображения вместо аудио).
+     - **Этап 2:** Если видео приватное или с возрастными ограничениями, происходит автоматический фолбек на `downloads/cookies.txt`.
+     - **Этап 3:** При сбоях включается попытка скачивания через резервные клиенты (`mweb,web`, `android,web`).
+
 ### Комплексное укрепление безопасности и DevSecOps аудит (Июль 2026)
 1. **Изоляция Docker и принцип наименьших привилегий (Least Privilege)**:
    - В [Dockerfile](file:///home/ubuntu/ai_agent_for_vps/Dockerfile) создан непривилегированный системный пользователь `appuser:appgroup`. Все процессы внутри контейнера исполняются без `root`-привилегий.

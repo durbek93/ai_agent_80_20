@@ -4,9 +4,9 @@ FROM python:3.12-slim
 # 2. Создание системного непривилегированного пользователя для безопасности (Principle of Least Privilege)
 RUN groupadd -r appgroup && useradd -r -g appgroup -d /app appuser
 
-# 3. Установка системных утилит (FFmpeg, Node.js, curl, unzip) и фиксация версии Deno (v2.2.3)
+# 3. Установка системных утилит (FFmpeg, Node.js, QuickJS, curl, unzip) и фиксация версии Deno (v2.2.3)
 ENV DENO_VERSION=v2.2.3
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg nodejs npm curl unzip && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg nodejs npm quickjs curl unzip && rm -rf /var/lib/apt/lists/*
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ]; then DENO_ARCH="aarch64"; else DENO_ARCH="x86_64"; fi && \
     curl -fsSL "https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-${DENO_ARCH}-unknown-linux-gnu.zip" -o deno.zip && \
