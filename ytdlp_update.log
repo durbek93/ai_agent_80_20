@@ -2,3 +2,12 @@ WARNING: Running pip as the 'root' user can result in broken permissions and con
 
 [notice] A new release of pip is available: 25.0.1 -> 26.1.2
 [notice] To update, run: pip install --upgrade pip
+
+[notice] A new release of pip is available: 25.0.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+
+[notice] A new release of pip is available: 25.0.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+
+[notice] A new release of pip is available: 25.0.1 -> 26.2
+[notice] To update, run: pip install --upgrade pip
